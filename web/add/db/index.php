@@ -111,7 +111,7 @@ if (!empty($_POST['ok'])) {
 $v_db_email = $panel[$user]['CONTACT'];
 
 // List avaiable database types
-$db_types = split(',', $_SESSION['DB_SYSTEM']);
+$db_types = explode(',', $_SESSION['DB_SYSTEM']);
 
 // List available database servers
 exec (VESTA_CMD."v-list-database-hosts json", $output, $return_var);
@@ -127,6 +127,3 @@ render_page($user, $TAB, 'add_db');
 // Flush session messages
 unset($_SESSION['error_msg']);
 unset($_SESSION['ok_msg']);
-
-// Footer
-include($_SERVER['DOCUMENT_ROOT'].'/templates/footer.html');

@@ -84,17 +84,9 @@ is_web_alias_new() {
 
 # Prepare web backend
 prepare_web_backend() {
-    if [ -d "/etc/php-fpm.d" ]; then
-        pool="/etc/php-fpm.d"
-    fi
-    if [ -d "/etc/php5/fpm/pool.d" ]; then
-        pool="/etc/php5/fpm/pool.d"
-    fi
+    pool=$(find -L /etc/php* -type d \( -name "pool.d" -o -name "*fpm.d" \))
     if [ ! -e "$pool" ]; then
-        pool=$(find /etc/php* -type d \( -name "pool.d" -o -name "*fpm.d" \))
-        if [ ! -e "$pool" ]; then
-            check_result $E_NOTEXIST "php-fpm pool doesn't exist"
-        fi
+        check_result $E_NOTEXIST "php-fpm pool doesn't exist"
     fi
 
     backend_type="$domain"
@@ -175,10 +167,13 @@ prepare_web_domain_values() {
 
 # Add web config
 add_web_config() {
-    conf="$HOMEDIR/$user/conf/web/$1.conf"
+    conf="$HOMEDIR/$user/conf/web/$domain.$1.conf"
     if [[ "$2" =~ stpl$ ]]; then
-        conf="$HOMEDIR/$user/conf/web/s$1.conf"
+        conf="$HOMEDIR/$user/conf/web/$domain.$1.ssl.conf"
     fi
+
+    domain_idn=$domain
+    format_domain_idn
 
     cat $WEBTPL/$1/$WEB_BACKEND/$2 | \
         sed -e "s|%ip%|$local_ip|g" \
@@ -207,7 +202,7 @@ add_web_config() {
             -e "s|%ssl_pem%|$ssl_pem|g" \
             -e "s|%ssl_ca_str%|$ssl_ca_str|g" \
             -e "s|%ssl_ca%|$ssl_ca|g" \
-    >> $conf
+    > $conf
 
     chown root:$user $conf
     chmod 640 $conf
@@ -223,7 +218,8 @@ add_web_config() {
     trigger="${2/.*pl/.sh}"
     if [ -x "$WEBTPL/$1/$WEB_BACKEND/$trigger" ]; then
         $WEBTPL/$1/$WEB_BACKEND/$trigger \
-            $user $domain $local_ip $HOMEDIR $HOMEDIR/$user/web/$domain/public_html
+            $user $domain $local_ip $HOMEDIR \
+            $HOMEDIR/$user/web/$domain/public_html
     fi
 }
 
@@ -236,6 +232,8 @@ get_web_config_lines() {
         check_result $E_PARSING "can't parse template $1"
     fi
 
+    domain_idn=$domain
+    format_domain_idn
     vhost_lines=$(grep -niF "name $domain_idn" $2)
     vhost_lines=$(echo "$vhost_lines" |egrep "$domain_idn($| |;)") #"
     vhost_lines=$(echo "$vhost_lines" |cut -f 1 -d :)
@@ -253,28 +251,50 @@ get_web_config_lines() {
 
 # Replace web config
 replace_web_config() {
-    conf="$HOMEDIR/$user/conf/web/$1.conf"
+    conf="$HOMEDIR/$user/conf/web/$domain.$1.conf"
     if [[ "$2" =~ stpl$ ]]; then
-        conf="$HOMEDIR/$user/conf/web/s$1.conf"
+        conf="$HOMEDIR/$user/conf/web/$domain.$1.ssl.conf"
     fi
-    get_web_config_lines $WEBTPL/$1/$WEB_BACKEND/$2 $conf
-    sed -i  "$top_line,$bottom_line s|$old|$new|g" $conf
+
+    if [ -e "$conf" ]; then
+        sed -i  "s|$old|$new|g" $conf
+    else
+        # fallback to old style configs
+        conf="$HOMEDIR/$user/conf/web/$1.conf"
+        if [[ "$2" =~ stpl$ ]]; then
+            conf="$HOMEDIR/$user/conf/web/s$1.conf"
+        fi
+        get_web_config_lines $WEBTPL/$1/$WEB_BACKEND/$2 $conf
+        sed -i  "$top_line,$bottom_line s|$old|$new|g" $conf
+    fi
 }
 
 # Delete web configuartion
 del_web_config() {
-    conf="$HOMEDIR/$user/conf/web/$1.conf"
+    conf="$HOMEDIR/$user/conf/web/$domain.$1.conf"
     if [[ "$2" =~ stpl$ ]]; then
-        conf="$HOMEDIR/$user/conf/web/s$1.conf"
+        conf="$HOMEDIR/$user/conf/web/$domain.$1.ssl.conf"
     fi
 
-    get_web_config_lines $WEBTPL/$1/$WEB_BACKEND/$2 $conf
-    sed -i "$top_line,$bottom_line d" $conf
-
-    web_domain=$(grep $domain $USER_DATA/web.conf |wc -l)
-    if [ "$web_domain" -eq '0' ]; then
-        sed -i "/.*\/$user\/.*$1.conf/d" /etc/$1/conf.d/vesta.conf
+    if [ -e "$conf" ]; then
+        sed -i "\|$conf|d" /etc/$1/conf.d/vesta.conf
         rm -f $conf
+    else
+        # fallback to old style configs
+        conf="$HOMEDIR/$user/conf/web/$1.conf"
+        if [[ "$2" =~ stpl$ ]]; then
+            conf="$HOMEDIR/$user/conf/web/s$1.conf"
+        fi
+        get_web_config_lines $WEBTPL/$1/$WEB_BACKEND/$2 $conf
+        sed -i "$top_line,$bottom_line d" $conf
+    fi
+    # clean-up for both config styles if there is no more domains
+    web_domain=$(grep DOMAIN $USER_DATA/web.conf |wc -l)
+    if [ "$web_domain" -eq '0' ]; then
+        sed -i "/.*\/$user\/.*/d" /etc/$1/conf.d/vesta.conf
+        if [ -f "$conf" ]; then
+            rm -f $conf
+        fi
     fi
 }
 
@@ -359,6 +379,11 @@ update_domain_zone() {
     SOA=$(idn --quiet -a -t "$SOA")
     if [ -z "$SERIAL" ]; then
         SERIAL=$(date +'%Y%m%d01')
+    fi
+    if [[ "$domain" = *[![:ascii:]]* ]]; then
+        domain_idn=$(idn -t --quiet -a $domain)
+    else
+        domain_idn=$domain
     fi
     zn_conf="$HOMEDIR/$user/conf/dns/$domain.db"
     echo "\$TTL $TTL
@@ -506,12 +531,12 @@ is_mail_domain_new() {
 is_mail_new() {
     check_acc=$(grep "ACCOUNT='$1'" $USER_DATA/mail/$domain.conf)
     if [ ! -z "$check_acc" ]; then
-        check_result $E_EXIST "mail account $1 is already exists"
+        check_result $E_EXISTS "mail account $1 is already exists"
     fi
     check_als=$(awk -F "ALIAS='" '{print $2}' $USER_DATA/mail/$domain.conf )
     check_als=$(echo "$check_als" | cut -f 1 -d "'" | grep -w $1)
     if [ ! -z "$check_als" ]; then
-        check_result $E_EXIST "mail alias $1 is already exists"
+        check_result $E_EXISTS "mail alias $1 is already exists"
     fi
 }
 

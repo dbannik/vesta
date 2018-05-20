@@ -41,10 +41,11 @@ fi
 #----------------------------------------------------------#
 
 api='https://acme-v01.api.letsencrypt.org'
-agreement='https://letsencrypt.org/documents/LE-SA-v1.1.1-August-1-2016.pdf'
 if [ -z "$email" ]; then
     email=$(get_user_value '$CONTACT')
 fi
+
+agreement=$(curl -s -I "$api/terms" |grep Location |cut -f 2 -d \ |tr -d '\r\n')
 
 # Generating key
 key="$USER_DATA/ssl/user.key"
@@ -54,7 +55,7 @@ if [ ! -e "$key" ]; then
 fi
 
 # Defining key exponent
-exponent=$(openssl pkey -inform perm -in "$key" -noout -text_pub |\
+exponent=$(openssl pkey -inform pem -in "$key" -noout -text_pub |\
     grep Exponent: |cut -f 2 -d '(' |cut -f 1 -d ')' |sed -e 's/x//' |\
     xxd -r -p |encode_base64)
 

@@ -6,13 +6,18 @@ App.Templates.html = {
     WEB: {
         hint: [''],
         notification: [
-                    '<li class="~!:UNSEEN~!"><span class="mark-seen" id="notification-~!:ID~!">&nbsp;</span>\
-                        <span class="title"><span class="icon ~!:TYPE~!">&nbsp;</span>~!:TOPIC~!</span>\
+                    '<li class="~!:UNSEEN~!"><span class="unselectable mark-seen" id="notification-~!:ID~!">&nbsp;</span>\
+                        <span class="title"><span class="unselectable icon ~!:TYPE~!">&nbsp;</span>~!:TOPIC~!</span>\
                         ~!:NOTICE~!\
                     </li>'
+        ],
+        notification_empty: [
+                    '<li class="empty">\
+                        '+App.Constants.NOTIFICATIONS_EMPTY+'\
+                    </li>'
         ]
-
     },
+
     // file manager
     //
 
@@ -143,6 +148,7 @@ App.Templates.html = {
                                     <li><label><input type="checkbox" name="write-by-others" value="1" ~!:WRITE_BY_OTHERS~! /> '+App.Constants.FM_WRITE_BY_OTHERS+'</label></li>\
                                     <li><label><input type="checkbox" name="execute-by-others" value="1" ~!:EXECUTE_BY_OTHERS~! /> '+App.Constants.FM_EXECUTE_BY_OTHERS+'</label></li>\
                                 </ul>\
+                                <input type="text" name="mask" class="chmod-mask" maxlength="3" />\
                             </div>\
                             <div class="controls">\
                                 <p class="cancel" onClick="FM.popupClose();">'+App.Constants.FM_CANCEL+'</p>\
@@ -166,6 +172,7 @@ App.Templates.html = {
                                     <li><label><input type="checkbox" name="write-by-others" value="1" checked /> '+App.Constants.FM_WRITE_BY_OTHERS+'</label></li>\
                                     <li><label><input type="checkbox" name="execute-by-others" value="1" checked /> '+App.Constants.FM_EXECUTE_BY_OTHERS+'</label></li>\
                                 </ul>\
+                                <input type="text" name="mask" class="chmod-mask" maxlength="3" value="777" />\
                             </div>\
                             <div class="controls">\
                                 <p class="cancel" onClick="FM.popupClose();">'+App.Constants.FM_CANCEL+'</p>\

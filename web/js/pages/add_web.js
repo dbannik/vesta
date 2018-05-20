@@ -151,6 +151,19 @@ App.Actions.WEB.toggle_additional_ftp_accounts = function(elm) {
     }
 }
 
+App.Actions.WEB.toggle_letsencrypt = function(elm) {
+    if ($(elm).attr('checked')) {
+        $('#ssltable textarea[name=v_ssl_crt],#ssltable textarea[name=v_ssl_key], #ssltable textarea[name=v_ssl_ca]').attr('disabled', 'disabled');
+        $('#generate-csr').hide();
+	$('.lets-encrypt-note').show();
+    }
+    else {
+        $('#ssltable textarea[name=v_ssl_crt],#ssltable textarea[name=v_ssl_key], #ssltable textarea[name=v_ssl_ca]').removeAttr('disabled');
+        $('#generate-csr').show();
+	$('.lets-encrypt-note').hide();
+    }
+}
+
 //
 // Page entry point
 App.Listeners.WEB.keypress_ftp_username();
@@ -162,6 +175,17 @@ $(function() {
     $('#v_domain').change(function() {
         var prefix = 'www.';
         document.getElementById('v_aliases').value = prefix + document.getElementById('v_domain').value;
+    });
+    App.Actions.WEB.toggle_letsencrypt($('input[name=v_letsencrypt]'))
+
+    $('select[name="v_stats"]').change(function(evt){
+        var select = $(evt.target);
+
+        if(select.val() == 'none'){
+            $('.stats-auth').hide();
+        } else {
+            $('.stats-auth').show();
+        }
     });
 });
 
