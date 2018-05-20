@@ -60,8 +60,8 @@ if [ -z "$sys_ip_check" ]; then
     /sbin/ip addr add $ip/$cidr dev $interface \
         broadcast $broadcast label $iface
 
-    # Adding RHEL/CentOS/Fedora startup script
-    if [ -e "/etc/redhat-release" ]; then
+    # Adding RHEL/CentOS/Fedora/Amazon startup script
+    if [ -d "/etc/sysconfig" ]; then
         sys_ip="# Added by vesta"
         sys_ip="$sys_ip\nDEVICE=$iface"
         sys_ip="$sys_ip\nBOOTPROTO=static"
@@ -141,6 +141,14 @@ if [ ! -z "$PROXY_SYSTEM" ]; then
         rpaf_str=$(grep RPAFproxy_ips $rpaf_conf)
         rpaf_str="$rpaf_str $ip"
         sed -i "s/.*RPAFproxy_ips.*/$rpaf_str/" $rpaf_conf
+    fi
+
+    #mod_remoteip
+    remoteip_conf="/etc/$WEB_SYSTEM/mods-enabled/remoteip.conf"
+    if [ -e "$remoteip_conf" ]; then
+        if [ $( grep -ic "$ip" $remoteip_conf ) -eq 0 ]; then
+            sed -i "s/<\/IfModule>/RemoteIPInternalProxy $ip\n<\/IfModule>/g" $remoteip_conf
+        fi
     fi
 fi
 

@@ -3,7 +3,7 @@
 session_start();
 
 define('VESTA_CMD', '/usr/bin/sudo /usr/local/vesta/bin/');
-define('JS_LATEST_UPDATE', '1467758417');
+define('JS_LATEST_UPDATE', '1491697868');
 
 $i = 0;
 
@@ -11,14 +11,30 @@ require_once(dirname(__FILE__).'/i18n.php');
 
 
 // Saving user IPs to the session for preventing session hijacking
-$user_combined_ip = $_SERVER['REMOTE_ADDR'] .'|'. $_SERVER['HTTP_CLIENT_IP'] .'|'. $_SERVER['HTTP_X_FORWARDED_FOR'] .'|'. $_SERVER['HTTP_X_FORWARDED'] .'|'. $_SERVER['HTTP_FORWARDED_FOR'] .'|'. $_SERVER['HTTP_FORWARDED'];
+$user_combined_ip = $_SERVER['REMOTE_ADDR'];
+
+if(isset($_SERVER['HTTP_CLIENT_IP'])){
+    $user_combined_ip .=  '|'. $_SERVER['HTTP_CLIENT_IP'];
+}
+if(isset($_SERVER['HTTP_X_FORWARDED_FOR'])){
+    $user_combined_ip .=  '|'. $_SERVER['HTTP_X_FORWARDED_FOR'];
+}
+if(isset($_SERVER['HTTP_FORWARDED_FOR'])){
+    $user_combined_ip .=  '|'. $_SERVER['HTTP_FORWARDED_FOR'];
+}
+if(isset($_SERVER['HTTP_X_FORWARDED'])){
+    $user_combined_ip .=  '|'. $_SERVER['HTTP_X_FORWARDED'];
+}
+if(isset($_SERVER['HTTP_FORWARDED'])){
+    $user_combined_ip .=  '|'. $_SERVER['HTTP_FORWARDED'];
+}
 
 if(!isset($_SESSION['user_combined_ip'])){
     $_SESSION['user_combined_ip'] = $user_combined_ip;
 }
 
 // Checking user to use session from the same IP he has been logged in
-if($_SESSION['user_combined_ip'] != $user_combined_ip){
+if($_SESSION['user_combined_ip'] != $user_combined_ip && $_SERVER['REMOTE_ADDR'] != '127.0.0.1'){
     session_destroy();
     session_start();
     $_SESSION['request_uri'] = $_SERVER['REQUEST_URI'];
@@ -344,4 +360,27 @@ function list_timezones() {
         $timezone_list[$timezone] = "$timezone [ $current_time ] ${pretty_offset}";
     }
     return $timezone_list;
+}
+
+/**
+ * A function that tells is it MySQL installed on the system, or it is MariaDB.
+ *
+ * Explaination:
+ * $_SESSION['DB_SYSTEM'] has 'mysql' value even if MariaDB is installed, so you can't figure out is it really MySQL or it's MariaDB.
+ * So, this function will make it clear.
+ * 
+ * If MySQL is installed, function will return 'mysql' as a string.
+ * If MariaDB is installed, function will return 'mariadb' as a string.
+ * 
+ * Hint: if you want to check if PostgreSQL is installed - check value of $_SESSION['DB_SYSTEM']
+ *
+ * @return string
+ */
+function is_it_mysql_or_mariadb() {
+    exec (VESTA_CMD."v-list-sys-services json", $output, $return_var);
+    $data = json_decode(implode('', $output), true);
+    unset($output);
+    $mysqltype='mysql';
+    if (isset($data['mariadb'])) $mysqltype='mariadb';
+    return $mysqltype;
 }

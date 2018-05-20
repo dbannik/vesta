@@ -71,6 +71,9 @@ rebuild_user_conf() {
         echo "$BIN/v-update-web-domains-disk $user" \
             >> $VESTA/data/queue/disk.pipe
 
+        if [[ -L "$HOMEDIR/$user/web" ]]; then
+            rm $HOMEDIR/$user/web
+        fi
         mkdir -p $HOMEDIR/$user/conf/web
         mkdir -p $HOMEDIR/$user/web
         mkdir -p $HOMEDIR/$user/tmp
@@ -105,6 +108,9 @@ rebuild_user_conf() {
         echo "$BIN/v-update-mail-domains-disk $user" \
             >> $VESTA/data/queue/disk.pipe
 
+        if [[ -L "$HOMEDIR/$user/mail" ]]; then
+            rm $HOMEDIR/$user/mail
+        fi
         mkdir -p $HOMEDIR/$user/conf/mail
         mkdir -p $HOMEDIR/$user/mail
         chmod 751 $HOMEDIR/$user/mail
@@ -227,6 +233,8 @@ rebuild_web_domain_conf() {
 
     # Adding web stats parser
     if [ ! -z "$STATS" ]; then
+        domain_idn=$domain
+        format_domain_idn
         cat $WEBTPL/$STATS/$STATS.tpl |\
             sed -e "s|%ip%|$local_ip|g" \
                 -e "s|%web_system%|$WEB_SYSTEM|g" \
@@ -252,17 +260,23 @@ rebuild_web_domain_conf() {
 
         if [ ! -z "$STATS_USER" ]; then
             stats_dir="$HOMEDIR/$user/web/$domain/stats"
-            echo "AuthUserFile $stats_dir/.htpasswd" > $stats_dir/.htaccess
-            echo "AuthName \"Web Statistics\"" >> $stats_dir/.htaccess
-            echo "AuthType Basic" >> $stats_dir/.htaccess
-            echo "Require valid-user" >> $stats_dir/.htaccess
+            if [ "$WEB_SYSTEM" = 'nginx' ]; then
+                echo "auth_basic \"Web Statistics\";" > $stats_dir/auth.conf
+                echo "auth_basic_user_file $stats_dir/.htpasswd;" >> \
+                    $stats_dir/auth.conf
+            else
+                echo "AuthUserFile $stats_dir/.htpasswd" > $stats_dir/.htaccess
+                echo "AuthName \"Web Statistics\"" >> $stats_dir/.htaccess
+                echo "AuthType Basic" >> $stats_dir/.htaccess
+                echo "Require valid-user" >> $stats_dir/.htaccess
+            fi
             echo "$STATS_USER:$STATS_CRYPT" > $stats_dir/.htpasswd
         fi
     fi
 
     # Adding ftp users
     if [ -z "$FTP_SHELL" ]; then
-        shell='/sbin/nologin'
+        shell=$(which nologin)
         if [ -e "/usr/bin/rssh" ]; then
             shell='/usr/bin/rssh'
         fi
@@ -525,44 +539,38 @@ rebuild_mail_domain_conf() {
 
 # Rebuild MySQL
 rebuild_mysql_database() {
-
-    host_str=$(grep "HOST='$HOST'" $VESTA/conf/mysql.conf)
-    eval $host_str
-    if [ -z $HOST ] || [ -z $USER ] || [ -z $PASSWORD ]; then
-        echo "Error: mysql config parsing failed"
-        if [ ! -z "$SENDMAIL" ]; then
-            echo "Can't parse MySQL DB config" | $SENDMAIL -s "$subj" $email
+    mysql_connect $HOST
+    mysql_query "CREATE DATABASE \`$DB\` CHARACTER SET $CHARSET" >/dev/null
+    if [ "$mysql_fork" = "mysql" ]; then
+        # mysql
+        if [ "$(echo $mysql_ver |cut -d '.' -f2)" -ge 7 ]; then
+            # mysql >= 5.7
+            mysql_query "CREATE USER IF NOT EXISTS \`$DBUSER\`" > /dev/null
+            mysql_query "CREATE USER IF NOT EXISTS \`$DBUSER\`@localhost" > /dev/null
+            query="UPDATE mysql.user SET authentication_string='$MD5'"
+            query="$query WHERE User='$DBUSER'"
+        else
+            # mysql < 5.7
+            query="UPDATE mysql.user SET Password='$MD5' WHERE User='$DBUSER'"
         fi
-        log_event "$E_PARSING" "$ARGUMENTS"
-        exit $E_PARSING
-    fi
-
-    query='SELECT VERSION()'
-    mysql -h $HOST -u $USER -p$PASSWORD -e "$query" > /dev/null 2>&1
-    if [ '0' -ne "$?" ]; then
-        echo "Error: Database connection to $HOST failed"
-        if [ ! -z "$SENDMAIL" ]; then
-            echo "Database connection to MySQL host $HOST failed" |\
-                $SENDMAIL -s "$subj" $email
+    else
+        # mariadb
+        if [ "$(echo $mysql_ver |cut -d '.' -f1)" -eq 5 ]; then
+            # mariadb = 5
+            mysql_query "CREATE USER \`$DBUSER\`" > /dev/null
+            mysql_query "CREATE USER \`$DBUSER\`@localhost" > /dev/null
+        else
+            # mariadb = 10
+            mysql_query "CREATE USER IF NOT EXISTS \`$DBUSER\`" > /dev/null
+            mysql_query "CREATE USER IF NOT EXISTS \`$DBUSER\`@localhost" > /dev/null
         fi
-        log_event  "$E_CONNECT" "$ARGUMENTS"
-        exit $E_CONNECT
+        # mariadb any version
+        query="UPDATE mysql.user SET Password='$MD5' WHERE User='$DBUSER'"
     fi
-
-    query="CREATE DATABASE \`$DB\` CHARACTER SET $CHARSET"
-    mysql -h $HOST -u $USER -p$PASSWORD -e "$query" > /dev/null 2>&1
-
-    query="GRANT ALL ON \`$DB\`.* TO \`$DBUSER\`@\`%\`"
-    mysql -h $HOST -u $USER -p$PASSWORD -e "$query" > /dev/null 2>&1
-
-    query="GRANT ALL ON \`$DB\`.* TO \`$DBUSER\`@localhost"
-    mysql -h $HOST -u $USER -p$PASSWORD -e "$query" > /dev/null 2>&1
-
-    query="UPDATE mysql.user SET Password='$MD5' WHERE User='$DBUSER';"
-    mysql -h $HOST -u $USER -p$PASSWORD -e "$query" > /dev/null 2>&1
-
-    query="FLUSH PRIVILEGES;"
-    mysql -h $HOST -u $USER -p$PASSWORD -e "$query" > /dev/null 2>&1
+    mysql_query "GRANT ALL ON \`$DB\`.* TO \`$DBUSER\`@\`%\`" >/dev/null
+    mysql_query "GRANT ALL ON \`$DB\`.* TO \`$DBUSER\`@localhost" >/dev/null
+    mysql_query "$query" >/dev/null
+    mysql_query "FLUSH PRIVILEGES" >/dev/null
 }
 
 # Rebuild PostgreSQL

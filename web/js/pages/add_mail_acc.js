@@ -24,7 +24,6 @@ App.Actions.MAIL_ACC.disable_unlimited = function(elm, source_elm) {
     $(source_elm).css('opacity', '0.5');
 }
 
-// 
 App.Actions.MAIL_ACC.toggle_unlimited_feature = function(evt) {
     var elm = $(evt.target);
     var ref = elm.prev('.vst-input');
@@ -91,14 +90,37 @@ randomString = function() {
         $('#v_password').text(randomstring);
     else
         $('#v_password').text(Array(randomstring.length+1).join('*'));
+    generate_mail_credentials();
+}
+
+generate_mail_credentials = function() {
+    var div = $('.mail-infoblock').clone();
+    div.find('#mail_configuration').remove();
+    var pass=div.find('#v_password').text();
+    if (pass=="") div.find('#v_password').html(' ');
+    var output = div.text();
+    output=output.replace(/(?:\r\n|\r|\n|\t)/g, "|");
+    output=output.replace(/  /g, "");
+    output=output.replace(/\|\|/g, "|");
+    output=output.replace(/\|\|/g, "|");
+    output=output.replace(/\|\|/g, "|");
+    output=output.replace(/^\|+/g, "");
+    output=output.replace(/\|$/, "");
+    output=output.replace(/ $/, "");
+    output=output.replace(/:\|/g, ": ");
+    output=output.replace(/\|/g, "\n");
+    //console.log(output);
+    $('#v_credentials').val(output);
 }
 
 $(document).ready(function() {
     $('#v_account').text($('input[name=v_account]').val());
     $('#v_password').text($('input[name=v_password]').val());
+    generate_mail_credentials();
 
     $('input[name=v_account]').change(function(){
         $('#v_account').text($(this).val());
+        generate_mail_credentials();
     });
 
     $('input[name=v_password]').change(function(){
@@ -106,6 +128,7 @@ $(document).ready(function() {
             $('#v_password').text($(this).val());
         else
             $('#v_password').text(Array($(this).val().length+1).join('*'));
+        generate_mail_credentials();
     });
 
     $('.toggle-psw-visibility-icon').click(function(){
@@ -113,5 +136,39 @@ $(document).ready(function() {
             $('#v_password').text($('input[name=v_password]').val());
         else
             $('#v_password').text(Array($('input[name=v_password]').val().length+1).join('*'));
-     });
+        generate_mail_credentials();
+    });
+
+    $('#mail_configuration').change(function(evt){
+        var opt = $(evt.target).find('option:selected');
+
+        switch(opt.attr('v_type')){
+            case 'hostname':
+                $('#td_imap_hostname').html(opt.attr('domain'));
+                $('#td_smtp_hostname').html(opt.attr('domain'));
+                break;
+            case 'starttls':
+                $('#td_imap_port').html('143');
+                $('#td_imap_encryption').html('STARTTLS');
+                $('#td_smtp_port').html('587');
+                $('#td_smtp_encryption').html('STARTTLS');
+                break;
+            case 'ssl':
+                $('#td_imap_port').html('993');
+                $('#td_imap_encryption').html('SSL / TLS');
+                $('#td_smtp_port').html('465');
+                $('#td_smtp_encryption').html('SSL / TLS');
+                break;
+            case 'no_encryption':
+                $('#td_imap_hostname').html(opt.attr('domain'));
+                $('#td_smtp_hostname').html(opt.attr('domain'));
+
+                $('#td_imap_port').html('143');
+                $('#td_imap_encryption').html(opt.attr('no_encryption'));
+                $('#td_smtp_port').html('25');
+                $('#td_smtp_encryption').html(opt.attr('no_encryption'));
+                break;
+        }
+        generate_mail_credentials();
+    });
 });

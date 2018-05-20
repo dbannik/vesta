@@ -36,17 +36,126 @@ source $VESTA/func/db.sh
 source $VESTA/func/rebuild.sh
 source $VESTA/conf/vesta.conf
 
-# Check backup function
-is_backup_valid() {
-    if [ ! -e "$1" ]; then
-        check_result $E_NOTEXIST "backup $1 doesn't exist"
+# Check backup ownership function
+is_backup_available() {
+    passed=false
+    if [[ $2 =~ ^$1.[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]_[0-9][0-9]-[0-9][0-9]-[0-9][0-9].tar$ ]]; then
+        passed=true
+    elif [[ $2 =~ ^$1.[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9].tar$ ]]; then
+        passed=true
+    fi
+    
+    if [ $passed = false ]; then
+        check_result $E_FORBIDEN "permission denied"
     fi
 }
 
-# Check backup ownership function
-is_backup_available() {
-    if ! [[ $2 =~ ^$1.[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9].tar$ ]]; then
-         check_result $E_FORBIDEN "permission denied"
+# Defining ftp command function
+ftpc() {
+    /usr/bin/ftp -n $HOST $PORT <<EOF
+    quote USER $USERNAME
+    quote PASS $PASSWORD
+    binary
+    $1
+    $2
+    $3
+    quit
+EOF
+}
+
+# FTP backup download function
+ftp_download() {
+    source $VESTA/conf/ftp.backup.conf
+    if [ -z "$PORT" ]; then
+        PORT='21'
+    fi
+    if [ -z $BPATH ]; then
+        ftpc "get $1"
+    else
+        ftpc "cd $BPATH" "get $1"
+    fi
+}
+
+# sftp command function
+sftpc() {
+    expect -f "-" <<EOF "$@"
+        set timeout 60
+        set count 0
+        spawn /usr/bin/sftp -o StrictHostKeyChecking=no \
+            -o Port=$PORT $USERNAME@$HOST
+        expect {
+            "password:" {
+                send "$PASSWORD\r"
+                exp_continue
+            }
+
+            -re "Couldn't|(.*)disconnect|(.*)stalled|(.*)not found" {
+                set count \$argc
+                set output "Disconnected."
+                set rc $E_FTP
+                exp_continue
+            }
+
+            -re ".*denied.*(publickey|password)." {
+                set output "Permission denied, wrong publickey or password."
+                set rc $E_CONNECT
+            }
+
+            -re "\[0-9]*%" {
+                exp_continue
+            }
+
+            "sftp>" {
+                if {\$count < \$argc} {
+                    set arg [lindex \$argv \$count]
+                    send "\$arg\r"
+                    incr count
+                } else {
+                    send "exit\r"
+                    set output "Disconnected."
+                    if {[info exists rc] != 1} {
+                        set rc $OK
+                    }
+                }
+                exp_continue
+            }
+            timeout {
+                set output "Connection timeout."
+                set rc $E_CONNECT
+            }
+        }
+
+        if {[info exists output] == 1} {
+            puts "\$output"
+        }
+
+    exit \$rc
+EOF
+}
+
+# SFTP backup download function
+sftp_download() {
+    source $VESTA/conf/sftp.backup.conf
+    if [ -z "$PORT" ]; then
+        PORT='22'
+    fi
+    cd $BACKUP
+    if [ -z $BPATH ]; then
+        sftpc "get $1" > /dev/null 2>&1
+    else
+        sftpc "cd $BPATH" "get $1" > /dev/null 2>&1
+    fi
+
+}
+
+# Google backup download function
+google_download() {
+    source $VESTA/conf/google.backup.conf
+    gsutil="$VESTA/3rdparty/gsutil/gsutil"
+    export BOTO_CONFIG="$VESTA/conf/.google.backup.boto"
+    ${gsutil} cp gs://$BUCKET/$BPATH/$1 $BACKUP/ > /dev/null 2>&1
+    if [ "$?" -ne 0 ]; then
+        check_result "$E_CONNECT" "gsutil failed to download $1"
     fi
 }
 
@@ -58,13 +167,31 @@ is_backup_available() {
 args_usage='USER BACKUP [WEB] [DNS] [MAIL] [DB] [CRON] [UDIR] [NOTIFY]'
 check_args '2' "$#" "$args_usage"
 is_format_valid 'user' 'backup'
-is_backup_valid "$BACKUP/$backup"
 is_backup_available "$user" "$backup"
 
 
 #----------------------------------------------------------#
 #                       Action                             #
 #----------------------------------------------------------#
+
+# Checking local backup
+if [ ! -e "$BACKUP/$backup" ]; then
+    if [[ "$BACKUP_SYSTEM" =~ "google" ]]; then
+        google_download $backup
+        downloaded='yes'
+    fi
+    if [[ "$BACKUP_SYSTEM" =~ "sftp" ]] && [ -z "$downloaded" ]; then
+        sftp_download $backup
+        downloaded='yes'
+    fi
+    if [[ "$BACKUP_SYSTEM" =~ "ftp" ]] && [ -z "$downloaded" ]; then
+        ftp_download $backup
+        downloaded='yes'
+    fi
+    if [ -z "$downloaded" ]; then
+        check_result $E_NOTEXIST "backup $backup doesn't exist"
+    fi
+fi
 
 # Checking user existance on the server
 check_user=$(is_object_valid 'user' 'USER' "$user")
@@ -103,7 +230,7 @@ while [ "$la" -ge "$BACKUP_LA_LIMIT" ]; do
 done
 
 # Creating temporary directory
-tmpdir=$(mktemp -p $BACKUP -d)
+tmpdir=$(mktemp -p /tmp -d)
 if [ "$?" -ne 0 ]; then
     echo "Can't create tmp dir $tmpdir" |$SENDMAIL -s "$subj" $email $notify
     sed -i "/ $user /d" $VESTA/data/queue/backup.pipe
@@ -246,8 +373,10 @@ if [ "$web" != 'no' ] && [ ! -z "$WEB_SYSTEM" ]; then
 
             # Copying ssl certificates
             if [ "$SSL" = 'yes' ]; then
-                for crt in $(ls $tmpdir/web/$domain/conf |grep ssl); do
-                    crt=$(echo "$crt" |sed "s/ssl.//")
+                certificates=$(ls $tmpdir/web/$domain/conf| grep ssl)
+                certificates=$(echo "$certificates" |grep $domain)
+                for crt in $certificates; do
+                    crt=$(echo $crt|sed -e "s/ssl.//")
                     cp -f $tmpdir/web/$domain/conf/ssl.$crt $USER_DATA/ssl/$crt
                 done
             fi
@@ -255,8 +384,8 @@ if [ "$web" != 'no' ] && [ ! -z "$WEB_SYSTEM" ]; then
             # Concatenating web.conf keys
             str="DOMAIN='$domain' IP='$IP' IP6='$IP6' ALIAS='$ALIAS'"
             str="$str TPL='$TPL' SSL='$SSL' SSL_HOME='$SSL_HOME'"
-            str="$str FTP_USER='$FTP_USER' FTP_MD5='$FTP_MD5'"
-            str="$str BACKEND='$BACKEND' PROXY='$PROXY'"
+            str="$str LETSENCRYPT='$LETSENCRYPT' FTP_USER='$FTP_USER'"
+            str="$str FTP_MD5='$FTP_MD5' BACKEND='$BACKEND' PROXY='$PROXY'"
             str="$str PROXY_EXT='$PROXY_EXT' STATS='$STATS'"
             str="$str STATS_USER='$STATS_USER' STATS_CRYPT='$STATS_CRYPT'"
             str="$str U_DISK='$U_DISK' U_BANDWIDTH='0' SUSPENDED='no'"
@@ -403,6 +532,13 @@ if [ "$mail" != 'no' ] && [ ! -z "$MAIL_SYSTEM" ]; then
         domains=$(echo "$backup_domains" |egrep -f $tmpdir/selected.txt)
     fi
 
+    # Checking exim username for later chowning
+    exim_user="exim";
+    check_exim_username=$(grep -c '^Debian-exim:' /etc/passwd)
+    if [ "$check_exim_username" -eq 1 ]; then
+        exim_user="Debian-exim"
+    fi
+
     # Restoring dns domain
     for domain in $domains; do
         echo -e "$(date "+%F %T") $domain" |tee -a $tmpdir/restore.log
@@ -446,6 +582,9 @@ if [ "$mail" != 'no' ] && [ ! -z "$MAIL_SYSTEM" ]; then
 
         # Rebuilding mail config
         rebuild_mail_domain_conf
+        
+        domain_idn=$domain
+        format_domain_idn
 
         # Restoring emails
         if [ -e "$tmpdir/mail/$domain/accounts.tar.gz" ]; then
@@ -465,6 +604,11 @@ if [ "$mail" != 'no' ] && [ ! -z "$MAIL_SYSTEM" ]; then
                     -exec chown -h $user:mail {} \;
             fi
         fi
+
+        # Chowning mail conf files to exim user
+        find $HOMEDIR/$user/conf/mail/$domain_idn -user root \
+            -exec chown $exim_user {} \;
+
     done
 fi
 
